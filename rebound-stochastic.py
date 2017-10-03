@@ -3,6 +3,18 @@
 # We model the rebound of HIV from the latent reservoir
 # and track the number of mutations accumulated over time
 
+# This version generates stochastic parameters
+#(reactivation, death, and burst rates) using parameter
+# ranges from Hill et al. and Markowitz et al., J Virol
+# 2003 (https://doi.org/10.1128/JVI.77.8.5037-5038.2003)
+
+# Specifically, we choose the net growth rate (r), ratio
+# of variance to mean number of offspring for an infected
+# cell (rho), total infected cell death rate (delta), and
+# number of latent reactivations per day per million (A)
+# to be random from the prescribed distributions, then work
+# back to find consistent model parameters
+
 import sys
 import argparse
 import numpy as np                          # numerical tools
@@ -20,6 +32,21 @@ death_rate         = 0.863   # death rate of actively infected cells (per cell p
 mutation_rate      = 3e-5    # mutation rate (per base per new infection event)
 sequence_size      = 2600    # approximate number of bases sequenced
 
+log10_r_mean   = -0.398   # mean of log10 net growth rate (r) of rebound virus --> source: Hill
+log10_r_std    =  0.194   # standard deviation of "" ""
+log10_rho_mean =  1.0     # mean of log10 (rho) --> source: Hill (numbers chosen based on confidence interval)
+log10_rho_std  =  0.5     # standard deviation of "" ""
+delta_mean     =  1.0     # mean of net infected cell death rate --> source: Markowitz; in Hill this is fixed=1
+delta_std      =  0.3     # standard deviation of "" ""
+log10_A_mean   =  1.755   # mean of log10 number of reactivations per million latent cells (A) --> source: Hill
+log10_A_std    =  1.007   # standard deviation of "" ""
+
+b_min_cutoff = 0.005 # minimum allowed value of random burst_rate
+d_min_cutoff = 0     # minimum allowed value of random death_rate
+l_min_cutoff = 2.    # minimum allowed value of random poisson_burst_size
+A_min_cutoff = 5.    # minimum allowed value of random (reactivation_rate * 10^6)
+A_max_cutoff = 1e3   # maximum allowed value of random (reactivation_rate * 10^6)
+
 latent_reservoir_size = 1e6  # starting number of cells in the latent reservoir
 
 
@@ -29,6 +56,13 @@ latent_reservoir_size = 1e6  # starting number of cells in the latent reservoir
 def usage():
     print("")
 
+def get_parameters(r, delta, rho):
+    """ Return underlying parameters b = burst_rate, d = death_rate, l = poisson_burst_size """
+    dd = np.sqrt(r**2 + (2 * r * delta) * (rho - 1) + delta**2 * (rho - 1) * (rho + 3))
+    b  = ( r + delta + (rho * delta) - dd) / 2.
+    d  = (-r + delta - (rho * delta) + dd) / 2.
+    l  = ( r - delta + (rho * delta) + dd) / (2. * delta)
+    return b, d, l
 
 def main(verbose=False):
     """ Simulate the outgrowth and rebound of latent virus and save the results to a CSV file. """
@@ -49,7 +83,7 @@ def main(verbose=False):
     start = timer()
     
     f = open(output_file+'.csv', 'w')
-    f.write('trial,time,n,mutations\n')
+    f.write('trial,time,reactivation_rate,burst_rate,poisson_burst_size,death_rate,n,mutations\n')
     
     for t in range(n_trials):
     
@@ -61,10 +95,30 @@ def main(verbose=False):
         active_cells          = np.array([])
         active_cell_mutations = np.array([])
         time                  = 0
+        
+        # GENERATE STOCHASTIC PARAMETERS
+        
+        A = 10.**np.random.normal(log10_A_mean, log10_A_std)
+        while A<A_min_cutoff or A>A_max_cutoff:
+            A = 10.**np.random.normal(log10_A_mean, log10_A_std)
+        reactivation_rate = A / latent_reservoir_size
+        
+        r     = 10.**np.random.normal(log10_r_mean, log10_r_std)
+        rho   = 10.**np.random.normal(log10_rho_mean, log10_rho_std)
+        delta = np.random.normal(delta_mean, delta_std)
+        b, d, l = get_parameters(r, delta, rho)
+        while np.isnan(b) or b<b_min_cutoff or np.isnan(d) or d<d_min_cutoff or np.isnan(l) or l<l_min_cutoff:
+            r     = 10.**np.random.normal(log10_r_mean, log10_r_std)
+            rho   = 10.**np.random.normal(log10_rho_mean, log10_rho_std)
+            delta = np.random.normal(delta_mean, delta_std)
+            b, d, l = get_parameters(r, delta, rho)
+        burst_rate         = b
+        death_rate         = d
+        poisson_burst_size = l
 
         # STOCHASTIC SIMULATION
 
-        while np.sum(active_cells)<population_cutoff:
+        while np.sum(active_cells)<population_cutoff and time<100:
         
             n_active     = np.sum(active_cells)
             action_table = np.array([reactivation_rate * latent_cells, death_rate * n_active, burst_rate * n_active])
@@ -137,7 +191,8 @@ def main(verbose=False):
         # SAVE OUTPUT
 
         for i in range(len(active_cells)):
-            f.write('%d,%lf,%d,%d\n' % (t, time, active_cells[i], active_cell_mutations[i]))
+            f.write('%d,%lf,%lf,%lf,%lf,%lf' % (t, time, reactivation_rate, burst_rate, poisson_burst_size, death_rate))
+            f.write(',%d,%d\n' % (active_cells[i], active_cell_mutations[i]))
         f.flush()
         
     # End and output total time
