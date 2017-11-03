@@ -30,6 +30,7 @@ burst_rate         = 0.137   # rate of actively-infected cell burst (per cell pe
 poisson_burst_size = 10.22   # parameter for Poisson-distributed burst size (controls number of new infected)
 death_rate         = 0.863   # death rate of actively infected cells (per cell per day)
 mutation_rate      = 3e-5    # mutation rate (per base per new infection event)
+recombination_rate = 1.4e-5  # recombination rate (per base per new infection event) --> source: Neher and Leitner
 sequence_size      = 2600    # approximate number of bases sequenced
 
 log10_r_mean   = -0.398   # mean of log10 net growth rate (r) of rebound virus --> source: Hill
@@ -73,6 +74,7 @@ def main(verbose=False):
     parser.add_argument('-o',   type=str,   default='rebound', help='output file (without extension)')
     parser.add_argument('-n',   type=int,   default=100,       help='number of independent trials to simulate')
     parser.add_argument('-p',   type=float, default=1e3,       help='population cutoff (stop trial when actively infected >= this number)')
+    parser.add_argument('-s',   type=str,                      help='path to file that describes the starting sequence distribution')
     
     arg_list = parser.parse_args(sys.argv[1:])
     
