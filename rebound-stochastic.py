@@ -4,7 +4,7 @@
 # and track the number of mutations accumulated over time
 
 # This version generates stochastic parameters
-#(reactivation, death, and burst rates) using parameter
+# (reactivation, death, and burst rates) using parameter
 # ranges from Hill et al. and Markowitz et al., J Virol
 # 2003 (https://doi.org/10.1128/JVI.77.8.5037-5038.2003)
 
@@ -81,6 +81,7 @@ def main(verbose=False):
     output_file       = arg_list.o
     n_trials          = arg_list.n
     population_cutoff = arg_list.p
+    input_file        = arg_list.s
     
     start = timer()
     
@@ -95,7 +96,7 @@ def main(verbose=False):
 
         latent_cells          = latent_reservoir_size
         active_cells          = np.array([])
-        active_cell_mutations = np.array([])
+        active_cell_sequences = []
         time                  = 0
         
         # GENERATE STOCHASTIC PARAMETERS
@@ -134,13 +135,13 @@ def main(verbose=False):
             if action==0:
                 reactivated = False
                 for i in range(len(active_cells)):
-                    if active_cell_mutations[i]==0:
+                    if np.sum(active_cell_sequences[i])==0:
                         active_cells[i] += 1.
                         reactivated      = True
                         break
                 if not reactivated:
                     active_cells          = np.append(active_cells, 1.)
-                    active_cell_mutations = np.append(active_cell_mutations, 0)
+                    active_cell_sequences.append([0 for k in range(sequence_size)])
     
             # Active cell death
             # Choose a random actively-infected cell to die
@@ -148,8 +149,8 @@ def main(verbose=False):
                 death                = np.random.choice(range(len(active_cells)), p = active_cells / n_active)
                 active_cells[death] -= 1
                 if active_cells[death]==0:
-                    active_cells          = np.delete(active_cells, death)
-                    active_cell_mutations = np.delete(active_cell_mutations, death)
+                    active_cells = np.delete(active_cells, death)
+                    del active_cell_sequences[death]
     
             # Active cell burst
             # Choose a random actively-infected cell to burst with Poisson burst size
@@ -159,19 +160,36 @@ def main(verbose=False):
                 burst_size = np.random.poisson(poisson_burst_size)
                 if burst_size>0:
                     # Add new actively-infected cells to the pool
-                    n_mutations = np.random.binomial(sequence_size, mutation_rate, size = burst_size) + active_cell_mutations[burst]
-                    for i in range(len(n_mutations)):
-                        if n_mutations[i] in active_cell_mutations:
-                            idx                = np.where(active_cell_mutations==n_mutations[i])[0][0]
+                    n_mutations   = np.random.binomial(sequence_size, mutation_rate, size = burst_size)
+                    n_breakpoints = np.random.binomial(sequence_size, recombination_rate, size = burst_size)
+                    partner_idxs  = np.random.choice(range(len(active_cells)), p = active_cells / n_active, size = burst_size)
+                    for i in range(burst_size):
+                        # The new sequence starts as a copy of the old
+                        new_sequence = [k for k in active_cell_sequences[burst]]
+                        # Recombination: recombine with a random sequence from the set of active cells
+                        # Choose breakpoints uniformly at random; by convention the "parent" sequence starts at 0
+                        if n_breakpoints[i]>0:
+                            partner     = active_cell_sequences[partner_idxs[i]]
+                            breakpoints = sorted(list(np.random.choice(sequence_size, n_breakpoints[i], replace = False)))
+                            if n_breakpoints[i]%2==1: breakpoints.append(sequence_size)
+                            for j in range(0, len(breakpoints), 2):
+                                new_sequence[breakpoints[j]:breakpoints[j+1]] = partner[breakpoints[j]:breakpoints[j+1]]
+                        # Mutation: add de novo mutations
+                        for j in range(n_mutations[i]):
+                            site = np.random.choice(sequence_size)
+                            new_sequence[site] = 1 - new_sequence[site] # binary mutation approximation
+                        # Check for existence of sequence in the list
+                        if new_sequence in active_cell_sequences:
+                            idx                = active_cell_sequences.index(new_sequence)
                             active_cells[idx] += 1.
                         else:
-                            active_cells          = np.append(active_cells, 1.)
-                            active_cell_mutations = np.append(active_cell_mutations, n_mutations[i])
+                            active_cells = np.append(active_cells, 1.)
+                            active_cell_sequences.append(new_sequence)
                     # Remove the burst cell
                     active_cells[burst] -= 1.
                     if active_cells[burst]==0:
-                        active_cells          = np.delete(active_cells, burst)
-                        active_cell_mutations = np.delete(active_cell_mutations, burst)
+                        active_cells = np.delete(active_cells, burst)
+                        del active_cell_sequences[burst]
                     
                     # GROUP NEW ACTIVE BY NUMBER OF MUTATIONS FIRST?
                     #new_active    = [1.]
@@ -192,9 +210,25 @@ def main(verbose=False):
                     
         # SAVE OUTPUT
 
+        # Reorganize according to number of mutations
+        cell_counts    = []
+        cell_mutations = []
         for i in range(len(active_cells)):
+            n_mut = np.sum(active_cell_sequences[i])
+            if n_mut in cell_mutations:
+                cell_counts[cell_mutations.index(n_mut)] += active_cells[i]
+            else:
+                cell_counts.append(active_cells[i])
+                cell_mutations.append(n_mut)
+
+        # Order entries by number of mutations
+        ord            = np.argsort(cell_mutations)
+        cell_counts    = np.array(cell_counts)[ord]
+        cell_mutations = np.array(cell_mutations)[ord]
+
+        for i in range(len(cell_counts)):
             f.write('%d,%lf,%lf,%lf,%lf,%lf' % (t, time, reactivation_rate, burst_rate, poisson_burst_size, death_rate))
-            f.write(',%d,%d\n' % (active_cells[i], active_cell_mutations[i]))
+            f.write(',%d,%d\n' % (cell_counts[i], cell_mutations[i]))
         f.flush()
         
     # End and output total time
