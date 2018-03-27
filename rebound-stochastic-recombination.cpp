@@ -163,7 +163,7 @@ int main(int argc, char *argv[]) {
         std::vector<double> action_table(3, 0);
 
         // DEBUG
-        int counter = 0;
+        //int counter = 0;
 
         while (n_active<population_cutoff && time<100) {
         
@@ -171,8 +171,8 @@ int main(int argc, char *argv[]) {
             for (int i=0;i<active_cells.size();i++) n_active += active_cells[i];
         
             //DEBUG
-            if (counter%1000==0) printf("\n%d\t%lf",counter,n_active);
-            counter++;
+            //if (counter%1000==0) printf("\n%d\t%lf",counter,n_active);
+            //counter++;
         
             action_table[0] = reactivation_rate * latent_cells;
             action_table[1] = death_rate * n_active;
